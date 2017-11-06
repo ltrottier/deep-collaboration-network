@@ -52,30 +52,24 @@ def network_as_series_of_blocks(name, pretrained):
     return model, n_features
 
 
-class DeepCollaborationNetwork(nn.Module):
-    def __init__(self, underlying_network_name, out_dims, pretrained):
-        super(DeepCollaborationNetwork, self).__init__()
+class CollaborativeBlock(nn.Module):
+    def __init__(self, n_inputs, n_features):
+        super(CollaborativeBlock, self).__init__()
 
-        self.out_dims = out_dims
-        self.n_cols = len(out_dims)
+        self.n_inputs = n_inputs
+        self.n_features = n_features
 
-        # Define network
-        n_features = network_as_series_of_blocks(underlying_network_name, pretrained)[1]
-        columns = [network_as_series_of_blocks(underlying_network_name, pretrained)[0] for _ in range(self.n_cols)]
-        self.columns = nn.Sequential(*columns)
-        self.n_blocks = len(self.columns[0]._modules)
-
-        def gen_central_aggr_block(n_in, n_out):
+        def gen_central_aggregation(n_in, n_out):
             layer = nn.Sequential(
-                nn.Conv2d(n_in, n_out, 1, 1, 0, bias=False), # 1x1 conv
+                nn.Conv2d(n_in, n_out, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(n_out),
                 nn.ReLU(),
-                nn.Conv2d(n_out, n_out, 3, 1, 1, bias=False), # 3x3 conv
+                nn.Conv2d(n_out, n_out, 3, 1, 1, bias=False),
                 nn.BatchNorm2d(n_out),
                 nn.ReLU())
             return layer
 
-        def gen_task_aggr_block(n_in, n_out):
+        def gen_task_aggregation(n_in, n_out):
             layer = nn.Sequential(
                 nn.Conv2d(n_in, n_out, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(n_out),
@@ -84,23 +78,48 @@ class DeepCollaborationNetwork(nn.Module):
                 nn.BatchNorm2d(n_out))
             return layer
 
-        central_aggr = []
-        for nf in n_features:
-            aggr = gen_central_aggr_block(nf * self.n_cols, nf * self.n_cols // 4)
-            central_aggr.append(aggr)
-        self.central_aggr = nn.Sequential(*central_aggr)
+        n_in = n_features * n_inputs
+        n_out = n_features * n_inputs // 4
+        self.central_aggregation = gen_central_aggregation(n_in, n_out)
 
-        task_aggr = []
-        for col in range(self.n_cols):
-            col_aggr = []
-            for nf in n_features:
-                aggr = gen_task_aggr_block(nf + nf * self.n_cols // 4, nf)
-                col_aggr.append(aggr)
-            task_aggr.append(nn.Sequential(*col_aggr))
-        self.task_aggr = nn.Sequential(*task_aggr)
+        n_in = n_features + n_out
+        n_out = n_features
+        task_aggregation = []
+        for i in range(n_inputs):
+            task_aggregation.append(gen_task_aggregation(n_in, n_out))
+        self.task_aggregation = nn.Sequential(*task_aggregation)
+
+    def forward(self, inputs):
+        z = torch.cat(inputs, 1)
+        z = self.central_aggregation(z)
+
+        outputs = []
+        for i, x in enumerate(inputs):
+            y = torch.cat([x, z], 1)
+            y = x + self.task_aggregation[i](y)
+            outputs.append(y)
+
+        return outputs
 
 
-        # create fc layers
+class DeepCollaborationNetwork(nn.Module):
+    def __init__(self, underlying_network_name, out_dims, pretrained):
+        super(DeepCollaborationNetwork, self).__init__()
+
+        self.out_dims = out_dims
+        self.n_cols = len(out_dims)
+
+        # Create networks
+        n_features = network_as_series_of_blocks(underlying_network_name, pretrained)[1]
+        self.n_blocks = len(n_features)
+        columns = [network_as_series_of_blocks(underlying_network_name, pretrained)[0] for _ in range(self.n_cols)]
+        self.columns = nn.Sequential(*columns)
+
+        # Create collaborative blocks
+        collaborative_blocks = [CollaborativeBlock(self.n_cols, nf) for nf in n_features]
+        self.collaborative_blocks = nn.Sequential(*collaborative_blocks)
+
+        # Create fc layers
         def fc_block(dim_in, dim_out):
             dim_h = (dim_in + dim_out) // 2
             block = nn.Sequential(
@@ -114,27 +133,19 @@ class DeepCollaborationNetwork(nn.Module):
             self.fcs.append(fc_block(n_features[-1], out_dim))
         self.fcs = nn.Sequential(*self.fcs)
 
-
     def forward(self, x):
-
-        block_inputs = [x] * self.n_cols
+        inputs = [x] * self.n_cols
         for i in range(self.n_blocks):
-            block_outputs = []
-            for j, y in enumerate(block_inputs):
-                block_outputs.append(self.columns[j][i](y))
-            aggr = torch.cat(block_outputs, 1)
-            aggr = self.central_aggr[i](aggr)
-
-            block_inputs = []
-            for j, y in enumerate(block_outputs):
-                z = torch.cat([aggr, y], 1)
-                block_inputs.append(y + self.task_aggr[j][i](z))
+            hiddens = []
+            for j, input in enumerate(inputs):
+                hiddens.append(self.columns[j][i](input))
+            inputs = self.collaborative_blocks[i](hiddens)
 
         outputs = []
-        for j, y in enumerate(block_inputs):
-            z = F.avg_pool2d(y, kernel_size=y.size()[2:])
+        for i, x in enumerate(inputs):
+            z = F.avg_pool2d(x, kernel_size=x.size()[2:])
             z = z.view(z.size(0), -1)
-            outputs.append(self.fcs[j](z))
+            outputs.append(self.fcs[i](z))
 
         return outputs
 
