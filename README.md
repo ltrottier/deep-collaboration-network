@@ -8,6 +8,10 @@ This is an implementation of Deep Collaboration Network (DCNet) in `pytorch` fro
 1. [pytorch](http://pytorch.org/)
 2. torchvision==0.1.8
 
+## Update
+
+The collaborative block now uses an additional ReLU after the sum between the input (coming from the identity skip connection) and the output of the task aggregation. We obtained better performance with it.
+
 ## Example
 
 Here is an example on how to use `DCNet` and train it with `MultiTaskCriterion`:
@@ -22,7 +26,7 @@ import torch.nn as nn
 
 # define (input, targets) pair
 dims = [10, 5]
-bs = 1
+bs = 32
 input = Variable(torch.randn(bs, 3, 112, 112))
 targets = []
 for i, dim in enumerate(dims):

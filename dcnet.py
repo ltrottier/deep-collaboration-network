@@ -96,7 +96,7 @@ class CollaborativeBlock(nn.Module):
         outputs = []
         for i, x in enumerate(inputs):
             y = torch.cat([x, z], 1)
-            y = x + self.task_aggregation[i](y)
+            y = F.relu(x + self.task_aggregation[i](y))
             outputs.append(y)
 
         return outputs
