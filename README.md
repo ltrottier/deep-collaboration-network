@@ -3,6 +3,8 @@ Deep Collaboration Network
 
 This is an implementation of Deep Collaboration Network (DCNet) in `pytorch` from [Multi-Task Learning by Deep Collaboration and Application in Facial Landmark Detection](https://arxiv.org/abs/1711.00111) by Trottier, et al. (2017).
 
+![](https://raw.githubusercontent.com/ltrottier/deep-collaboration-network/master/collaborative-block.png) 
+
 ## Requirements
 
 1. [pytorch](http://pytorch.org/)
